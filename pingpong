@@ -1,0 +1,73 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#include <sys/time.h>
+ 
+#define BUFFER_SIZE 4096      // Size of the shared buffer (4 KB)
+#define ITERATIONS 1000000    // Number of ping-pong operations
+ 
+typedef struct {
+    char buffer[BUFFER_SIZE];
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    int flag;
+} shared_mem_t;
+ 
+shared_mem_t shared;
+ 
+void *ping_thread(void *arg) {
+    for (int i = 0; i < ITERATIONS; i++) {
+        pthread_mutex_lock(&shared.lock);
+        while (shared.flag != 0) {
+            pthread_cond_wait(&shared.cond, &shared.lock);
+        }
+        memset(shared.buffer, 0xAA, BUFFER_SIZE);  // Write pattern to buffer
+        shared.flag = 1;
+        pthread_cond_signal(&shared.cond);
+        pthread_mutex_unlock(&shared.lock);
+    }
+    return NULL;
+}
+ 
+void *pong_thread(void *arg) {
+    for (int i = 0; i < ITERATIONS; i++) {
+        pthread_mutex_lock(&shared.lock);
+        while (shared.flag != 1) {
+            pthread_cond_wait(&shared.cond, &shared.lock);
+        }
+        volatile char tmp = shared.buffer[0];  // Read first byte (force access)
+        (void)tmp;
+        shared.flag = 0;
+        pthread_cond_signal(&shared.cond);
+        pthread_mutex_unlock(&shared.lock);
+    }
+    return NULL;
+}
+ 
+int main() {
+    pthread_t ping, pong;
+    struct timeval start, end;
+ 
+    pthread_mutex_init(&shared.lock, NULL);
+    pthread_cond_init(&shared.cond, NULL);
+    shared.flag = 0;
+ 
+    gettimeofday(&start, NULL);
+    pthread_create(&ping, NULL, ping_thread, NULL);
+    pthread_create(&pong, NULL, pong_thread, NULL);
+ 
+    pthread_join(ping, NULL);
+    pthread_join(pong, NULL);
+    gettimeofday(&end, NULL);
+ 
+    double elapsed = (end.tv_sec - start.tv_sec) * 1000.0;
+    elapsed += (end.tv_usec - start.tv_usec) / 1000.0;
+ 
+    printf("Ping-pong test completed in %.2f ms for %d iterations\n", elapsed, ITERATIONS);
+    printf("Average latency per operation: %.4f microseconds\n", (elapsed * 1000.0) / ITERATIONS);
+ 
+    pthread_mutex_destroy(&shared.lock);
+    pthread_cond_destroy(&shared.cond);
+    return 0;
+}
